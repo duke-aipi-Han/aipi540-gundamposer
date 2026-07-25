@@ -57,6 +57,36 @@ select the local Apple GPU, run:
 GUNDAMPOSER_DEVICE=mps .venv/bin/python app.py
 ```
 
+## Dataset preparation
+
+Audit image-label pairing, image integrity, and cross-split duplicates without
+writing output:
+
+```bash
+.venv/bin/python scripts/prepare_dataset.py --dry-run
+```
+
+When the audit is clean, prepare deterministic 512×512 train, validation, and
+test folders and create a cross-split contact sheet:
+
+```bash
+.venv/bin/python scripts/prepare_dataset.py --contact-sheet
+```
+
+To intentionally preserve the current source assignments despite cross-split
+duplicate or variant images, run:
+
+```bash
+.venv/bin/python scripts/prepare_dataset.py \
+  --allow-cross-split-duplicates \
+  --overwrite \
+  --contact-sheet
+```
+
+The command refuses a non-empty destination unless `--overwrite` is provided,
+and overwrite is restricted to a `data/processed` directory. Source images and
+labels are never modified.
+
 ## Naming and rights
 
 This project does not claim affiliation with Gundam, Bandai, or any other
