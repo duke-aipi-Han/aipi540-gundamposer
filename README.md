@@ -27,16 +27,37 @@ uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 ```
 
-Run the pose preview:
+Run the app:
 
 ```bash
 .venv/bin/python app.py
 ```
 
 Open the local URL shown in the terminal, then upload a one-person photo or
-use the camera input. The body-pose model is downloaded and loaded on the first
-preview request.
+use the camera input. Choose a scene and select **Generate pose-guided image**.
+The app displays the pose overlay, the normalized 384×512 pose map, and one
+generated image. The source photo is not sent to the diffusion pipeline.
+
+Full-body photos with visible arms and legs give ControlNet the strongest pose
+signal. Generation uses full-duration OpenPose conditioning and composition
+prompts that favor a centered, head-to-toe result.
+
+The body-pose model is downloaded on the first detection request. Stable
+Diffusion 1.5 and OpenPose ControlNet are downloaded on the first generation
+request. Downloads are cached for later runs. A CUDA GPU is strongly
+recommended. On Apple Silicon, the app automatically uses MPS and enables CPU
+fallback for operations that MPS does not support. MPS generation uses float32
+to avoid half-precision NaNs during image decoding. CPU-only generation can be
+very slow.
+
+The automatic device selection order is CUDA, MPS, then CPU. To explicitly
+select the local Apple GPU, run:
+
+```bash
+GUNDAMPOSER_DEVICE=mps .venv/bin/python app.py
+```
 
 ## Naming and rights
 
-This project does not claim affiliation with Gundam, Bandai, or any other rights holder.
+This project does not claim affiliation with Gundam, Bandai, or any other
+rights holder.

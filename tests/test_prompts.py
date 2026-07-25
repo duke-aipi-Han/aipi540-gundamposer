@@ -60,6 +60,20 @@ def test_normalize_prompt_text_rejects_non_string() -> None:
 
 
 def test_negative_prompt_contains_required_exclusions() -> None:
-    for term in ("toy", "cropped body", "extra limbs", "text", "watermark"):
+    for term in (
+        "toy",
+        "portrait",
+        "close-up",
+        "cropped body",
+        "extra limbs",
+        "text",
+        "watermark",
+    ):
         assert term in NEGATIVE_PROMPT
 
+
+def test_prompt_emphasizes_pose_and_full_body_composition() -> None:
+    prompt = build_prompt("neutral studio")
+
+    assert "head-to-toe entirely visible" in prompt
+    assert "same arm and leg positions" in prompt

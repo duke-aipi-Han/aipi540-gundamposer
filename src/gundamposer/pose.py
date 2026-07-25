@@ -430,9 +430,19 @@ class PoseExtractor:
             aligned_pose,
             opacity=opacity,
         )
+        normalized_pose = normalize_body_pose(
+            detected_pose,
+            source_size=detector_input.size,
+            canvas_size=self._canvas_size,
+            margin_fraction=self._margin_fraction,
+        )
+        control_image = render_body_pose(
+            normalized_pose,
+            canvas_size=self._canvas_size,
+        )
         return PosePreviewResult(
             overlay_image=overlay,
-            pose_image=aligned_pose,
+            pose_image=control_image,
             person_count=1,
             detected_body_keypoints=len(_usable_keypoints(detected_pose)),
             detector_input_size=detector_input.size,

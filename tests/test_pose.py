@@ -167,12 +167,12 @@ def test_preview_overlays_pose_without_dimming_background() -> None:
         opacity=1.0,
     )
     overlay = np.asarray(result.overlay_image)
-    pose = np.asarray(result.pose_image)
 
     assert result.overlay_image.size == (200, 400)
-    assert result.pose_image.size == (200, 400)
-    assert np.all(overlay[~pose.any(axis=2)] == 255)
-    assert np.any(overlay[pose.any(axis=2)] != 255)
+    assert result.pose_image.size == (384, 512)
+    assert np.any(overlay != 255)
+    assert np.any(np.all(overlay == 255, axis=2))
+    assert np.asarray(result.pose_image).any()
 
 
 def test_overlay_rejects_mismatched_dimensions() -> None:
