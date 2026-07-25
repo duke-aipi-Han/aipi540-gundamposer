@@ -22,15 +22,18 @@ SCENE_PRESETS: Mapping[str, str] = MappingProxyType(
 )
 
 PROMPT_TEMPLATE = (
-    "a full-body life-sized humanoid warrior wearing hwmecha mechanical armor, "
+    "a wide shot of a life-sized humanoid warrior wearing hwmecha "
+    "mechanical armor, centered composition"
+    "the frame, matching the control pose with the same arm and leg positions, "
     "human proportions, articulated armor panels, detailed mechanical joints, "
-    "complete body, {scene_prompt}, high detail"
+    "{scene_prompt}, high detail"
 )
 
 NEGATIVE_PROMPT = (
     "toy, miniature, tabletop, display stand, plastic model photography, "
-    "cropped body, missing limbs, extra limbs, duplicate body, malformed arms, "
-    "malformed legs, blurry, low detail, text, logo, watermark"
+    "portrait, close-up, cut off, out of frame, "
+    "missing limbs, extra limbs, duplicate body, malformed arms, malformed legs, "
+    "blurry, low detail, text, logo, watermark"
 )
 
 _TRIGGER_PATTERN = re.compile(rf"\b{re.escape(TRIGGER_WORD)}\b", re.IGNORECASE)
@@ -73,4 +76,3 @@ def build_prompt(scene_prompt: str = DEFAULT_SCENE) -> str:
     if len(_TRIGGER_PATTERN.findall(prompt)) != 1:
         raise ValueError("The generated prompt must contain the trigger word exactly once.")
     return prompt
-
