@@ -19,3 +19,6 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-ra"
+markers = [
+    "integration: opt-in checks that may download model weights",
+]
