@@ -1,0 +1,25 @@
+base_model: stable-diffusion-v1-5/stable-diffusion-v1-5
+resolution: 512
+seed: 42
+
+lora:
+  rank: 8
+  alpha: 8
+  train_text_encoder: false
+
+training:
+  max_train_steps: 1500
+  train_batch_size: 1
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0001
+  mixed_precision: fp16
+  gradient_checkpointing: true
+  checkpointing_steps: 250
+
+validation:
+  seed: 42
+  prompts:
+    - a full-body life-sized warrior wearing hwmecha mechanical armor, neutral studio background
+    - a full-body hwmecha armored humanoid in a running pose, futuristic city
+    - a life-sized hwmecha warrior standing in an industrial hangar
+
