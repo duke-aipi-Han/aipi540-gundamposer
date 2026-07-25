@@ -14,7 +14,9 @@ GundamPoser is a hackathon project for:
 1. extracting the body pose from an one-person photo and 
 2. generating one mecha-inspired person approximately the same pose.
 
-To preserve privacy, the app does not preserve a person's face or identity. The source photo will be used only for pose estimation and will not be passed to the diffusion pipeline.
+To preserve privacy, the app does not preserve a person's face or identity.
+The source photo will be used only for pose estimation and will not be passed
+to the diffusion pipeline.
 
 - Python version: 3.10.x
 
@@ -25,7 +27,16 @@ uv venv .venv
 uv pip install --python .venv/bin/python -r requirements.txt
 ```
 
+Run the pose preview:
+
+```bash
+.venv/bin/python app.py
+```
+
+Open the local URL shown in the terminal, then upload a one-person photo or
+use the camera input. The body-pose model is downloaded and loaded on the first
+preview request.
+
 ## Naming and rights
 
 This project does not claim affiliation with Gundam, Bandai, or any other rights holder.
-

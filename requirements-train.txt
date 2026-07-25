@@ -1,3 +1,6 @@
-# Training and development dependencies will be pinned during Phase 0.
 -r requirements.txt
 
+accelerate==1.14.0
+datasets==4.5.0
+peft==0.19.1
+pytest==9.1.1
