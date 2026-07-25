@@ -1,0 +1,51 @@
+# Local operating-system and editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+
+# Model and service caches
+.cache/
+.huggingface/
+huggingface/
+models/
+
+# Source and processed training data
+data/gunpla-yolov7/**
+!data/gunpla-yolov7/README.roboflow.txt
+data/processed/**
+
+# User uploads and generated/training outputs
+uploads/
+outputs/**
+!outputs/.gitkeep
+
+# Model weights and checkpoints
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+checkpoint-*/
+
+plan.md
+planner.md

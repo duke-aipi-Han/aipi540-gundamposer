@@ -1,0 +1,3 @@
+# Training and development dependencies will be pinned during Phase 0.
+-r requirements.txt
+
