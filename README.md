@@ -33,10 +33,15 @@ Run the app:
 .venv/bin/python app.py
 ```
 
-Open the local URL shown in the terminal, then upload a one-person photo or
-use the camera input. Choose a scene and select **Generate pose-guided image**.
-The app displays the pose overlay, the normalized 384×512 pose map, and one
-generated image. The source photo is not sent to the diffusion pipeline.
+Open the local URL shown in the terminal, then choose one of the bundled pose
+photos, upload a one-person photo, or use the camera input. Optional scene and
+seed controls are under **Generation options**. A scene preset fills the full
+prompt, which remains editable before generation. Select **Generate** to see
+the baseline and trained-LoRA images first; the pose overlay and normalized
+384×512 pose map are available under the collapsed pose details. Both images
+use the same prompt, seed, and pose. The source photo is not sent to the
+diffusion pipeline. Bundled photo sources and licenses are recorded in
+`assets/pose-examples/ATTRIBUTION.md`.
 
 Full-body photos with visible arms and legs give ControlNet the strongest pose
 signal. Generation uses full-duration OpenPose conditioning and composition
@@ -86,6 +91,36 @@ duplicate or variant images, run:
 The command refuses a non-empty destination unless `--overwrite` is provided,
 and overwrite is restricted to a `data/processed` directory. Source images and
 labels are never modified.
+
+## LoRA training
+
+Validate the training configuration and processed training split without
+loading model weights:
+
+```bash
+.venv/bin/python scripts/train_lora.py --dry-run
+```
+
+Run the configured UNet-only LoRA training job:
+
+```bash
+.venv/bin/python scripts/train_lora.py
+```
+
+The trainer saves resumable adapter checkpoints under `outputs/training`, fixed
+prompt validation grids for each checkpoint, and the final adapter at
+`outputs/gundamposer_lora.safetensors`. CUDA uses the configured fp16 precision;
+Apple Silicon automatically uses float32 for stable MPS training. A local model
+snapshot can be supplied with `--base-model /absolute/path/to/snapshot` when
+offline.
+
+The comparison app automatically loads the final adapter when it exists. Use a
+different checkpoint or adapter with:
+
+```bash
+GUNDAMPOSER_LORA_PATH=/absolute/path/to/adapter.safetensors \
+  .venv/bin/python app.py
+```
 
 ## Naming and rights
 

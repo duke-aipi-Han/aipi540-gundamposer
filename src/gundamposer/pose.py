@@ -19,6 +19,7 @@ DEFAULT_BODY_MODEL_FILE = "body_pose_model.pth"
 DEFAULT_INPUT_MAX_SIDE = 768
 DEFAULT_CANVAS_SIZE = (384, 512)
 DEFAULT_MARGIN_FRACTION = 0.08
+DEFAULT_POSE_SCALE = 0.8
 
 _BODY_LIMBS = (
     (1, 2),
@@ -226,7 +227,8 @@ def normalize_body_pose(
         scale_candidates.append(available_width / pose_width)
     if pose_height > 0:
         scale_candidates.append(available_height / pose_height)
-    scale = min(scale_candidates) if scale_candidates else 1.0
+    fitted_scale = min(scale_candidates) if scale_candidates else 1.0
+    scale = fitted_scale * DEFAULT_POSE_SCALE
     pose_center_x = (min_x + max_x) / 2
     pose_center_y = (min_y + max_y) / 2
 
