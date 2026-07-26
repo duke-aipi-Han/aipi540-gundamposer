@@ -1,8 +1,9 @@
-"""Baseline Stable Diffusion and OpenPose ControlNet generation."""
+"""Stable Diffusion and OpenPose ControlNet generation with optional LoRA."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from time import perf_counter
 from typing import Any
 
@@ -10,12 +11,14 @@ from PIL import Image
 import torch
 
 from gundamposer.preprocessing import to_oriented_rgb
-from gundamposer.prompts import NEGATIVE_PROMPT, build_prompt
+from gundamposer.prompts import NEGATIVE_PROMPT, build_prompt, normalize_prompt_text
 
 
 BASE_MODEL_ID = "stable-diffusion-v1-5/stable-diffusion-v1-5"
 CONTROLNET_MODEL_ID = "lllyasviel/control_v11p_sd15_openpose"
 MAX_SEED = 2**31 - 1
+LORA_ADAPTER_NAME = "gundamposer"
+DEFAULT_LORA_STRENGTH = 0.8
 
 
 class GenerationError(ValueError):
@@ -75,10 +78,12 @@ class GundamPoserPipeline:
         *,
         device: str,
         settings: GenerationSettings | None = None,
+        lora_loaded: bool = False,
     ) -> None:
         self._pipeline = pipeline
         self.device = device
         self.settings = settings or GenerationSettings()
+        self.lora_loaded = lora_loaded
 
     @classmethod
     def load(
@@ -89,6 +94,7 @@ class GundamPoserPipeline:
         device: str | None = None,
         cache_dir: str | None = None,
         settings: GenerationSettings | None = None,
+        lora_path: str | Path | None = None,
     ) -> "GundamPoserPipeline":
         """Load public baseline models once and move them to the chosen device."""
 
@@ -122,11 +128,21 @@ class GundamPoserPipeline:
         )
         if resolved_device == "mps":
             pipeline.enable_attention_slicing()
+        lora_loaded = lora_path is not None
+        if lora_path is not None:
+            resolved_lora_path = Path(lora_path).expanduser().resolve()
+            if not resolved_lora_path.is_file():
+                raise GenerationError(f"LoRA adapter does not exist: {resolved_lora_path}")
+            pipeline.load_lora_weights(
+                str(resolved_lora_path),
+                adapter_name=LORA_ADAPTER_NAME,
+            )
         pipeline.to(resolved_device)
         return cls(
             pipeline,
             device=resolved_device,
             settings=settings,
+            lora_loaded=lora_loaded,
         )
 
     def generate(
@@ -134,6 +150,9 @@ class GundamPoserPipeline:
         pose_image: Image.Image,
         scene_prompt: str,
         seed: int,
+        *,
+        lora_strength: float = 0.0,
+        prompt_override: str | None = None,
     ) -> GenerationResult:
         """Generate exactly one image from a body-pose map and scene text."""
 
@@ -150,8 +169,36 @@ class GundamPoserPipeline:
             or not 0 <= seed <= MAX_SEED
         ):
             raise GenerationError(f"seed must be an integer from 0 to {MAX_SEED}")
+        if (
+            isinstance(lora_strength, bool)
+            or not isinstance(lora_strength, (int, float))
+            or not 0 <= lora_strength <= 2
+        ):
+            raise GenerationError("lora_strength must be a number from 0 to 2")
+        normalized_lora_strength = float(lora_strength)
+        if normalized_lora_strength > 0 and not self.lora_loaded:
+            raise GenerationError(
+                "A trained LoRA adapter is required for trained inference."
+            )
 
-        prompt = build_prompt(scene_prompt)
+        if self.lora_loaded:
+            if normalized_lora_strength == 0:
+                self._pipeline.disable_lora()
+            else:
+                self._pipeline.enable_lora()
+                self._pipeline.set_adapters(
+                    LORA_ADAPTER_NAME,
+                    adapter_weights=normalized_lora_strength,
+                )
+
+        if prompt_override is None:
+            prompt = build_prompt(scene_prompt)
+        else:
+            if not isinstance(prompt_override, str):
+                raise GenerationError("prompt must be a string")
+            prompt = normalize_prompt_text(prompt_override)
+            if not prompt:
+                raise GenerationError("prompt cannot be empty")
         control_image = to_oriented_rgb(pose_image)
         generator_device = "cuda" if self.device == "cuda" else "cpu"
         generator = torch.Generator(device=generator_device).manual_seed(seed)
@@ -188,7 +235,7 @@ class GundamPoserPipeline:
             metadata=GenerationMetadata(
                 seed=seed,
                 prompt=prompt,
-                lora_strength=0.0,
+                lora_strength=normalized_lora_strength,
                 controlnet_strength=self.settings.controlnet_conditioning_scale,
                 generation_time_seconds=elapsed,
                 device=self.device,

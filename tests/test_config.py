@@ -26,7 +26,7 @@ def test_load_training_config() -> None:
     assert config.lora.rank == 8
     assert config.lora.alpha == 8
     assert config.lora.train_text_encoder is False
-    assert config.training.max_train_steps == 1500
+    assert config.training.max_train_steps == 750
     assert config.training.train_batch_size == 1
     assert config.training.gradient_accumulation_steps == 4
     assert config.training.learning_rate == pytest.approx(0.0001)
@@ -99,4 +99,3 @@ def test_invalid_yaml_has_clear_error(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="Invalid YAML"):
         load_training_config(invalid)
-

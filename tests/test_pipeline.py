@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +14,7 @@ from gundamposer.pipeline import (
     GenerationError,
     GenerationSettings,
     GundamPoserPipeline,
+    LORA_ADAPTER_NAME,
     MAX_SEED,
     resolve_device,
 )
@@ -29,6 +31,8 @@ class FakeDiffusionPipeline:
         self.images = images or [Image.new("RGB", (384, 512), "blue")]
         self.safety_flags = safety_flags
         self.arguments: dict[str, object] | None = None
+        self.lora_enabled = False
+        self.adapter_calls: list[tuple[str, float]] = []
 
     def __call__(self, **kwargs: object) -> SimpleNamespace:
         self.arguments = kwargs
@@ -36,6 +40,15 @@ class FakeDiffusionPipeline:
             images=self.images,
             nsfw_content_detected=self.safety_flags,
         )
+
+    def disable_lora(self) -> None:
+        self.lora_enabled = False
+
+    def enable_lora(self) -> None:
+        self.lora_enabled = True
+
+    def set_adapters(self, name: str, *, adapter_weights: float) -> None:
+        self.adapter_calls.append((name, adapter_weights))
 
 
 def test_generate_wires_fixed_baseline_settings() -> None:
@@ -88,6 +101,57 @@ def test_generate_accepts_custom_fixed_settings() -> None:
     assert fake.arguments["num_inference_steps"] == 12
     assert fake.arguments["guidance_scale"] == 5.5
     assert fake.arguments["controlnet_conditioning_scale"] == 0.7
+
+
+def test_generate_uses_editable_prompt_override() -> None:
+    fake = FakeDiffusionPipeline()
+    pipeline = GundamPoserPipeline(fake, device="cpu")
+
+    result = pipeline.generate(
+        Image.new("RGB", (384, 512)),
+        "neutral studio",
+        42,
+        prompt_override="  custom hwmecha pose,   blue armor  ",
+    )
+
+    assert fake.arguments is not None
+    assert fake.arguments["prompt"] == "custom hwmecha pose, blue armor"
+    assert result.metadata.prompt == "custom hwmecha pose, blue armor"
+
+
+@pytest.mark.parametrize("prompt", ["", " \n "])
+def test_generate_rejects_empty_explicit_prompt(prompt: str) -> None:
+    with pytest.raises(GenerationError, match="prompt cannot be empty"):
+        GundamPoserPipeline(FakeDiffusionPipeline(), device="cpu").generate(
+            Image.new("RGB", (384, 512)),
+            "neutral studio",
+            42,
+            prompt_override=prompt,
+        )
+
+
+def test_generate_switches_between_baseline_and_trained_adapter() -> None:
+    fake = FakeDiffusionPipeline()
+    pipeline = GundamPoserPipeline(fake, device="cpu", lora_loaded=True)
+    pose = Image.new("RGB", (384, 512))
+
+    baseline = pipeline.generate(pose, "studio", 1)
+    trained = pipeline.generate(pose, "studio", 1, lora_strength=0.8)
+
+    assert baseline.metadata.lora_strength == 0.0
+    assert trained.metadata.lora_strength == 0.8
+    assert fake.lora_enabled is True
+    assert fake.adapter_calls == [(LORA_ADAPTER_NAME, 0.8)]
+
+
+def test_generate_requires_loaded_adapter_for_positive_strength() -> None:
+    with pytest.raises(GenerationError, match="trained LoRA"):
+        GundamPoserPipeline(FakeDiffusionPipeline(), device="cpu").generate(
+            Image.new("RGB", (384, 512)),
+            "studio",
+            1,
+            lora_strength=0.8,
+        )
 
 
 def test_generate_rejects_wrong_pose_dimensions() -> None:
@@ -208,6 +272,31 @@ def test_load_uses_float32_and_attention_slicing_on_mps() -> None:
     loaded_pipeline.enable_attention_slicing.assert_called_once_with()
     loaded_pipeline.to.assert_called_once_with("mps")
     assert result.device == "mps"
+
+
+def test_load_adds_named_local_lora_adapter(tmp_path: Path) -> None:
+    path = tmp_path / "adapter.safetensors"
+    path.write_bytes(b"adapter")
+    loaded_pipeline = MagicMock()
+    loaded_pipeline.scheduler.config = {}
+    with (
+        patch("diffusers.ControlNetModel.from_pretrained", return_value=object()),
+        patch(
+            "diffusers.StableDiffusionControlNetPipeline.from_pretrained",
+            return_value=loaded_pipeline,
+        ),
+        patch(
+            "diffusers.DPMSolverMultistepScheduler.from_config",
+            return_value=object(),
+        ),
+    ):
+        result = GundamPoserPipeline.load(device="cpu", lora_path=path)
+
+    loaded_pipeline.load_lora_weights.assert_called_once_with(
+        str(path.resolve()),
+        adapter_name=LORA_ADAPTER_NAME,
+    )
+    assert result.lora_loaded is True
 
 
 def test_resolve_device_rejects_unavailable_cuda() -> None:

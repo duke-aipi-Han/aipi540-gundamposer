@@ -1,9 +1,11 @@
-"""Interactive pose preview and baseline image generation."""
+"""Interactive pose extraction and baseline-versus-LoRA comparison."""
 
 from __future__ import annotations
 
 from functools import lru_cache
 import os
+from pathlib import Path
+from types import MappingProxyType
 from typing import Protocol
 
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -21,10 +23,33 @@ from gundamposer.pipeline import (
     GenerationError,
     GenerationResult,
     GundamPoserPipeline,
+    DEFAULT_LORA_STRENGTH,
     MAX_SEED,
     resolve_device,
 )
-from gundamposer.prompts import SCENE_PRESETS, build_scene_prompt
+from gundamposer.prompts import SCENE_PRESETS, build_prompt, build_scene_prompt
+
+
+POSE_EXAMPLE_ROOT = Path(__file__).resolve().parent / "assets" / "pose-examples"
+POSE_EXAMPLES = MappingProxyType(
+    {
+        "Running stride": POSE_EXAMPLE_ROOT / "running.jpg",
+        "Action balance": POSE_EXAMPLE_ROOT / "action-balance.jpg",
+        "Celebration": POSE_EXAMPLE_ROOT / "celebration.jpg",
+        "Martial arts stance": POSE_EXAMPLE_ROOT / "martial-arts.jpg",
+    }
+)
+
+APP_CSS = """
+.app-shell { max-width: 1120px; margin: 0 auto; }
+.generate-button { min-height: 3.25rem; font-size: 1.05rem; }
+@media (max-width: 700px) {
+  .gradio-container { padding-left: 0.65rem !important; padding-right: 0.65rem !important; }
+  .responsive-row { flex-direction: column !important; gap: 0.75rem !important; }
+  .responsive-row > div { width: 100% !important; min-width: 100% !important; }
+  .responsive-image { min-height: 360px !important; }
+}
+"""
 
 
 class PosePreviewer(Protocol):
@@ -38,6 +63,9 @@ class BaselineGenerator(Protocol):
         pose_image: Image.Image,
         scene_prompt: str,
         seed: int,
+        *,
+        lora_strength: float = 0.0,
+        prompt_override: str | None = None,
     ) -> GenerationResult:
         """Generate one image from a pose map."""
 
@@ -51,10 +79,47 @@ def get_pose_extractor() -> PoseExtractor:
 
 @lru_cache(maxsize=1)
 def get_generation_pipeline() -> GundamPoserPipeline:
-    """Load and reuse the baseline diffusion pipeline."""
+    """Load and reuse one diffusion pipeline with an optional trained adapter."""
 
     requested_device = os.getenv("GUNDAMPOSER_DEVICE") or None
-    return GundamPoserPipeline.load(device=requested_device)
+    configured_lora = os.getenv("GUNDAMPOSER_LORA_PATH")
+    default_lora = Path("outputs/gundamposer_lora.safetensors")
+    lora_path: str | Path | None = configured_lora
+    if lora_path is None and default_lora.is_file():
+        lora_path = default_lora
+    load_options: dict[str, object] = {
+        "device": requested_device,
+        "lora_path": lora_path,
+    }
+    configured_base_model = os.getenv("GUNDAMPOSER_BASE_MODEL")
+    configured_controlnet = os.getenv("GUNDAMPOSER_CONTROLNET_MODEL")
+    if configured_base_model:
+        load_options["base_model_id"] = configured_base_model
+    if configured_controlnet:
+        load_options["controlnet_model_id"] = configured_controlnet
+    return GundamPoserPipeline.load(
+        **load_options,
+    )
+
+
+def load_pose_example(selection: str | None) -> Image.Image | None:
+    """Load a bundled pose example into the same input used by uploads."""
+
+    if selection is None:
+        return None
+    path = POSE_EXAMPLES.get(selection)
+    if path is None:
+        raise ValueError(f"Unknown built-in pose: {selection}")
+    if not path.is_file():
+        raise ValueError(f"Built-in pose is unavailable: {selection}")
+    with Image.open(path) as image:
+        return image.convert("RGB")
+
+
+def full_prompt_for_scene(preset: str) -> str:
+    """Create the editable default prompt for a scene preset."""
+
+    return build_prompt(build_scene_prompt(preset))
 
 
 def create_pose_preview(
@@ -81,10 +146,12 @@ def create_pose_preview(
 def create_baseline_generation(
     pose_image: Image.Image | None,
     scene_preset: str,
-    scene_description: str,
+    scene_description: str | None,
     seed: int | float,
     *,
     generator: BaselineGenerator | None = None,
+    lora_strength: float = 0.0,
+    prompt_override: str | None = None,
 ) -> tuple[Image.Image, str]:
     """Generate one baseline image using only the extracted pose map."""
 
@@ -96,12 +163,15 @@ def create_baseline_generation(
     if normalized_seed != seed or not 0 <= normalized_seed <= MAX_SEED:
         raise ValueError(f"Seed must be an integer from 0 to {MAX_SEED}.")
 
-    scene_prompt = build_scene_prompt(scene_preset, scene_description)
+    normalized_description = "" if scene_description is None else scene_description
+    scene_prompt = build_scene_prompt(scene_preset, normalized_description)
     active_generator = generator or get_generation_pipeline()
     result = active_generator.generate(
         pose_image,
         scene_prompt,
         normalized_seed,
+        lora_strength=lora_strength,
+        prompt_override=prompt_override,
     )
     metadata = result.metadata
     status = (
@@ -117,45 +187,59 @@ def create_baseline_generation(
 def create_pose_guided_generation(
     image: Image.Image | None,
     scene_preset: str,
-    scene_description: str,
+    scene_description: str | None,
     seed: int | float,
     *,
     previewer: PosePreviewer | None = None,
     generator: BaselineGenerator | None = None,
-) -> tuple[Image.Image, Image.Image, Image.Image, str]:
-    """Detect one pose and generate from its control map in a single action."""
+    prompt_override: str | None = None,
+) -> tuple[Image.Image, Image.Image, Image.Image, Image.Image, str]:
+    """Detect one pose and generate matched baseline and trained outputs."""
 
     overlay, pose_image, pose_status = create_pose_preview(
         image,
         previewer=previewer,
     )
-    generated, generation_status = create_baseline_generation(
+    baseline, baseline_status = create_baseline_generation(
         pose_image,
         scene_preset,
         scene_description,
         seed,
         generator=generator,
+        prompt_override=prompt_override,
+    )
+    trained, trained_status = create_baseline_generation(
+        pose_image,
+        scene_preset,
+        scene_description,
+        seed,
+        generator=generator,
+        lora_strength=DEFAULT_LORA_STRENGTH,
+        prompt_override=prompt_override,
     )
     return (
         overlay,
         pose_image,
-        generated,
-        f"{pose_status}\n\n{generation_status}",
+        baseline,
+        trained,
+        f"{pose_status}\n\n**Baseline**\n\n{baseline_status}\n\n"
+        f"**Trained LoRA**\n\n{trained_status}",
     )
 
 
 def _handle_pose_guided_generation(
     image: Image.Image | None,
     scene_preset: str,
-    scene_description: str,
+    prompt_override: str | None,
     seed: int | float,
-) -> tuple[Image.Image, Image.Image, Image.Image, str]:
+) -> tuple[Image.Image, Image.Image, Image.Image, Image.Image, str]:
     try:
         return create_pose_guided_generation(
             image,
             scene_preset,
-            scene_description,
+            "",
             seed,
+            prompt_override=prompt_override,
         )
     except HfHubHTTPError as error:
         raise gr.Error(
@@ -171,82 +255,137 @@ def _handle_pose_guided_generation(
 def build_app() -> gr.Blocks:
     requested_device = os.getenv("GUNDAMPOSER_DEVICE") or None
     generation_device = resolve_device(requested_device)
-    with gr.Blocks(title="GundamPoser Baseline") as demo:
+    with gr.Blocks(
+        title="GundamPoser Comparison",
+        elem_classes=["app-shell"],
+    ) as demo:
+        gr.HTML(f"<style>{APP_CSS}</style>")
         gr.Markdown(
-            "# Pose-Guided Baseline Generation\n"
-            "Choose a full-body photo of one person, adjust the scene if desired, "
-            "then generate the pose preview and image in one action."
+            "# Pose-Guided Baseline vs Trained LoRA\n"
+            "Choose a built-in pose or provide a full-body photo of one person, "
+            "then compare the baseline with the trained result."
         )
         gr.Markdown(f"Generation backend: **{generation_device.upper()}**")
-        with gr.Row():
-            with gr.Column(scale=2):
-                gr.Markdown("## 1. Choose a photo")
-                source_image = gr.Image(
-                    label="One-person full-body photo",
-                    sources=["upload", "webcam"],
-                    type="pil",
-                    image_mode="RGB",
-                    height=512,
-                )
-            with gr.Column(scale=1):
-                gr.Markdown("## 2. Set the scene")
-                scene_preset = gr.Dropdown(
-                    choices=list(SCENE_PRESETS),
-                    value="Neutral studio",
-                    label="Scene preset",
-                )
-                scene_description = gr.Textbox(
-                    label="Optional scene details",
-                    placeholder="for example: dramatic lighting, blue armor",
-                    lines=3,
-                )
-                seed = gr.Number(
-                    value=42,
-                    precision=0,
-                    minimum=0,
-                    maximum=MAX_SEED,
-                    label="Seed",
-                )
-                generate_button = gr.Button(
-                    "Generate pose-guided image",
-                    variant="primary",
-                )
-        gr.Markdown("## 3. Review the result")
-        with gr.Row(equal_height=True):
-            overlay_image = gr.Image(
-                label="Pose overlay",
-                type="pil",
-                interactive=False,
-                height=512,
+        configured_lora = os.getenv("GUNDAMPOSER_LORA_PATH")
+        default_lora = Path("outputs/gundamposer_lora.safetensors")
+        displayed_lora = Path(configured_lora) if configured_lora else default_lora
+        adapter_status = "available" if displayed_lora.is_file() else "not found"
+        gr.Markdown(
+            f"Trained adapter: `{displayed_lora}` (**{adapter_status}**)"
+        )
+        gr.Markdown("## Choose a pose")
+        pose_example = gr.Dropdown(
+            choices=list(POSE_EXAMPLES),
+            value=None,
+            label="Built-in pose (optional)",
+            info="Selecting an example fills the photo input below.",
+        )
+        source_image = gr.Image(
+            label="Upload or take a one-person full-body photo",
+            sources=["upload", "webcam"],
+            type="pil",
+            image_mode="RGB",
+            height=480,
+            elem_classes=["responsive-image"],
+        )
+        pose_example.change(
+            fn=load_pose_example,
+            inputs=pose_example,
+            outputs=source_image,
+            show_progress="hidden",
+        )
+        with gr.Accordion("Generation options", open=False):
+            scene_preset = gr.Dropdown(
+                choices=list(SCENE_PRESETS),
+                value="Neutral studio",
+                label="Scene preset",
             )
-            pose_image = gr.Image(
-                label="Pose map",
+            full_prompt = gr.Textbox(
+                value=full_prompt_for_scene("Neutral studio"),
+                label="Full prompt",
+                info="Edit freely. Keep 'hwmecha' for the trained adapter style.",
+                lines=5,
+            )
+            scene_preset.change(
+                fn=full_prompt_for_scene,
+                inputs=scene_preset,
+                outputs=full_prompt,
+                show_progress="hidden",
+            )
+            seed = gr.Number(
+                value=42,
+                precision=0,
+                minimum=0,
+                maximum=MAX_SEED,
+                label="Seed",
+            )
+        generate_button = gr.Button(
+            "Generate",
+            variant="primary",
+            elem_classes=["generate-button"],
+        )
+        gr.Markdown("## Generated results")
+        with gr.Row(equal_height=True, elem_classes=["responsive-row"]):
+            baseline_image = gr.Image(
+                label="Baseline (LoRA off)",
                 type="pil",
                 format="png",
                 interactive=False,
-                height=512,
+                height=480,
+                elem_classes=["responsive-image"],
             )
-            generated_image = gr.Image(
-                label="Generated image",
+            trained_image = gr.Image(
+                label=f"Trained LoRA ({DEFAULT_LORA_STRENGTH:.1f})",
                 type="pil",
                 format="png",
                 interactive=False,
-                height=512,
+                height=480,
+                elem_classes=["responsive-image"],
             )
         generation_status = gr.Markdown()
+        with gr.Accordion("Extracted pose details", open=False):
+            with gr.Row(equal_height=True, elem_classes=["responsive-row"]):
+                overlay_image = gr.Image(
+                    label="Pose overlay",
+                    type="pil",
+                    interactive=False,
+                    height=480,
+                    elem_classes=["responsive-image"],
+                )
+                pose_image = gr.Image(
+                    label="Pose map",
+                    type="pil",
+                    format="png",
+                    interactive=False,
+                    height=480,
+                    elem_classes=["responsive-image"],
+                )
         generate_button.click(
             fn=_handle_pose_guided_generation,
-            inputs=[source_image, scene_preset, scene_description, seed],
-            outputs=[overlay_image, pose_image, generated_image, generation_status],
+            inputs=[source_image, scene_preset, full_prompt, seed],
+            outputs=[
+                overlay_image,
+                pose_image,
+                baseline_image,
+                trained_image,
+                generation_status,
+            ],
             concurrency_limit=1,
         )
         gr.Markdown(
             "The photo is processed in memory for this preview and is not "
             "intentionally retained. Generation receives only the extracted pose map, "
             "not the source photo. Only upload images you have permission to use. "
-            "The first generation downloads the public diffusion models and CPU "
-            "generation can be slow."
+            "The first generation downloads the public diffusion models when they "
+            "are not cached. Baseline and trained images use the same pose, prompt, "
+            "seed, and pipeline; only the LoRA adapter state differs."
         )
+        with gr.Accordion("Built-in photo credits", open=False):
+            gr.Markdown(
+                "The bundled examples are public-domain or CC0 images from "
+                "Wikimedia Commons. Full source and license details are included "
+                "with the assets."
+            )
     return demo
 
 

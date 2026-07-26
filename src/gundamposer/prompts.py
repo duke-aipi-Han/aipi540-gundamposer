@@ -22,8 +22,8 @@ SCENE_PRESETS: Mapping[str, str] = MappingProxyType(
 )
 
 PROMPT_TEMPLATE = (
-    "a wide shot of a life-sized humanoid warrior wearing hwmecha "
-    "mechanical armor, centered composition"
+    "a wide full-body shot of a life-sized humanoid warrior wearing hwmecha "
+    "mechanical armor, centered composition, head-to-toe entirely visible inside "
     "the frame, matching the control pose with the same arm and leg positions, "
     "human proportions, articulated armor panels, detailed mechanical joints, "
     "{scene_prompt}, high detail"
@@ -31,7 +31,7 @@ PROMPT_TEMPLATE = (
 
 NEGATIVE_PROMPT = (
     "toy, miniature, tabletop, display stand, plastic model photography, "
-    "portrait, close-up, cut off, out of frame, "
+    "portrait, close-up, cropped body, cut off, out of frame, "
     "missing limbs, extra limbs, duplicate body, malformed arms, malformed legs, "
     "blurry, low detail, text, logo, watermark"
 )

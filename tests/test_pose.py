@@ -150,6 +150,20 @@ def test_pose_normalization_keeps_a_margin() -> None:
     assert max(point.y for point in points) <= 0.9 + tolerance
 
 
+def test_default_pose_normalization_shrinks_fitted_pose_by_twenty_percent() -> None:
+    pose = make_pose((0, 0.0, 0.0), (1, 1.0, 1.0))
+
+    normalized = normalize_body_pose(pose, source_size=(384, 512))
+    points = [point for point in normalized.keypoints if point is not None]
+
+    assert max(point.x for point in points) - min(
+        point.x for point in points
+    ) == pytest.approx(0.672)
+    assert max(point.y for point in points) - min(
+        point.y for point in points
+    ) == pytest.approx(0.672)
+
+
 def test_result_does_not_expose_source_image() -> None:
     result_fields = {field.name for field in fields(PoseExtractionResult)}
     assert result_fields == {
