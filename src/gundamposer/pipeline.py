@@ -19,6 +19,8 @@ CONTROLNET_MODEL_ID = "lllyasviel/control_v11p_sd15_openpose"
 MAX_SEED = 2**31 - 1
 LORA_ADAPTER_NAME = "gundamposer"
 DEFAULT_LORA_STRENGTH = 0.8
+DEFAULT_LORA_REPO_ID = "hw391/AIPI540-GundamPoser-LoRA"
+DEFAULT_LORA_WEIGHT_NAME = "gundamposer_lora.safetensors"
 
 
 class GenerationError(ValueError):
@@ -95,6 +97,9 @@ class GundamPoserPipeline:
         cache_dir: str | None = None,
         settings: GenerationSettings | None = None,
         lora_path: str | Path | None = None,
+        lora_repo_id: str | None = None,
+        lora_weight_name: str = DEFAULT_LORA_WEIGHT_NAME,
+        lora_token: str | bool | None = None,
     ) -> "GundamPoserPipeline":
         """Load public baseline models once and move them to the chosen device."""
 
@@ -103,6 +108,11 @@ class GundamPoserPipeline:
             DPMSolverMultistepScheduler,
             StableDiffusionControlNetPipeline,
         )
+
+        if lora_path is not None and lora_repo_id is not None:
+            raise GenerationError("Use either a local LoRA path or a LoRA repository.")
+        if not isinstance(lora_weight_name, str) or not lora_weight_name.strip():
+            raise GenerationError("lora_weight_name must be a non-empty string")
 
         resolved_device = resolve_device(device)
         dtype = torch.float16 if resolved_device == "cuda" else torch.float32
@@ -128,7 +138,7 @@ class GundamPoserPipeline:
         )
         if resolved_device == "mps":
             pipeline.enable_attention_slicing()
-        lora_loaded = lora_path is not None
+        lora_loaded = lora_path is not None or lora_repo_id is not None
         if lora_path is not None:
             resolved_lora_path = Path(lora_path).expanduser().resolve()
             if not resolved_lora_path.is_file():
@@ -136,6 +146,15 @@ class GundamPoserPipeline:
             pipeline.load_lora_weights(
                 str(resolved_lora_path),
                 adapter_name=LORA_ADAPTER_NAME,
+            )
+        elif lora_repo_id is not None:
+            if not isinstance(lora_repo_id, str) or not lora_repo_id.strip():
+                raise GenerationError("lora_repo_id must be a non-empty string")
+            pipeline.load_lora_weights(
+                lora_repo_id,
+                weight_name=lora_weight_name,
+                adapter_name=LORA_ADAPTER_NAME,
+                token=lora_token,
             )
         pipeline.to(resolved_device)
         return cls(

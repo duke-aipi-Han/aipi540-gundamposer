@@ -11,6 +11,8 @@ import torch
 from gundamposer.pipeline import (
     BASE_MODEL_ID,
     CONTROLNET_MODEL_ID,
+    DEFAULT_LORA_REPO_ID,
+    DEFAULT_LORA_WEIGHT_NAME,
     GenerationError,
     GenerationSettings,
     GundamPoserPipeline,
@@ -297,6 +299,44 @@ def test_load_adds_named_local_lora_adapter(tmp_path: Path) -> None:
         adapter_name=LORA_ADAPTER_NAME,
     )
     assert result.lora_loaded is True
+
+
+def test_load_adds_named_private_hub_lora_adapter() -> None:
+    loaded_pipeline = MagicMock()
+    loaded_pipeline.scheduler.config = {}
+    with (
+        patch("diffusers.ControlNetModel.from_pretrained", return_value=object()),
+        patch(
+            "diffusers.StableDiffusionControlNetPipeline.from_pretrained",
+            return_value=loaded_pipeline,
+        ),
+        patch(
+            "diffusers.DPMSolverMultistepScheduler.from_config",
+            return_value=object(),
+        ),
+    ):
+        result = GundamPoserPipeline.load(
+            device="cpu",
+            lora_repo_id=DEFAULT_LORA_REPO_ID,
+            lora_token=True,
+        )
+
+    loaded_pipeline.load_lora_weights.assert_called_once_with(
+        DEFAULT_LORA_REPO_ID,
+        weight_name=DEFAULT_LORA_WEIGHT_NAME,
+        adapter_name=LORA_ADAPTER_NAME,
+        token=True,
+    )
+    assert result.lora_loaded is True
+
+
+def test_load_rejects_two_lora_sources(tmp_path: Path) -> None:
+    with pytest.raises(GenerationError, match="either a local LoRA"):
+        GundamPoserPipeline.load(
+            device="cpu",
+            lora_path=tmp_path / "adapter.safetensors",
+            lora_repo_id=DEFAULT_LORA_REPO_ID,
+        )
 
 
 def test_resolve_device_rejects_unavailable_cuda() -> None:
