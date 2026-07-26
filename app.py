@@ -14,6 +14,18 @@ import gradio as gr
 from huggingface_hub.errors import HfHubHTTPError
 from PIL import Image
 
+try:
+    import spaces
+except ImportError:  # The decorator is only required by the hosted Space.
+    class _LocalSpaces:
+        @staticmethod
+        def GPU(*args: object, **kwargs: object):  # noqa: N802
+            if args and callable(args[0]):
+                return args[0]
+            return lambda function: function
+
+    spaces = _LocalSpaces()
+
 from gundamposer.pose import (
     PoseExtractionError,
     PoseExtractor,
@@ -24,6 +36,8 @@ from gundamposer.pipeline import (
     GenerationResult,
     GundamPoserPipeline,
     DEFAULT_LORA_STRENGTH,
+    DEFAULT_LORA_REPO_ID,
+    DEFAULT_LORA_WEIGHT_NAME,
     MAX_SEED,
     resolve_device,
 )
@@ -31,6 +45,7 @@ from gundamposer.prompts import SCENE_PRESETS, build_prompt, build_scene_prompt
 
 
 POSE_EXAMPLE_ROOT = Path(__file__).resolve().parent / "assets" / "pose-examples"
+IS_ZERO_GPU = os.getenv("SPACES_ZERO_GPU", "").lower() in {"1", "true", "yes"}
 POSE_EXAMPLES = MappingProxyType(
     {
         "Running stride": POSE_EXAMPLE_ROOT / "running.jpg",
@@ -81,16 +96,30 @@ def get_pose_extractor() -> PoseExtractor:
 def get_generation_pipeline() -> GundamPoserPipeline:
     """Load and reuse one diffusion pipeline with an optional trained adapter."""
 
-    requested_device = os.getenv("GUNDAMPOSER_DEVICE") or None
+    requested_device = (
+        "cuda" if IS_ZERO_GPU else os.getenv("GUNDAMPOSER_DEVICE") or None
+    )
     configured_lora = os.getenv("GUNDAMPOSER_LORA_PATH")
     default_lora = Path("outputs/gundamposer_lora.safetensors")
     lora_path: str | Path | None = configured_lora
     if lora_path is None and default_lora.is_file():
         lora_path = default_lora
+    configured_lora_repo = os.getenv("GUNDAMPOSER_LORA_REPO_ID")
+    lora_repo_id: str | None = None
+    if lora_path is None and (IS_ZERO_GPU or configured_lora_repo):
+        lora_repo_id = configured_lora_repo or DEFAULT_LORA_REPO_ID
     load_options: dict[str, object] = {
         "device": requested_device,
         "lora_path": lora_path,
     }
+    if lora_repo_id is not None:
+        load_options.update(
+            {
+                "lora_repo_id": lora_repo_id,
+                "lora_weight_name": DEFAULT_LORA_WEIGHT_NAME,
+                "lora_token": True,
+            }
+        )
     configured_base_model = os.getenv("GUNDAMPOSER_BASE_MODEL")
     configured_controlnet = os.getenv("GUNDAMPOSER_CONTROLNET_MODEL")
     if configured_base_model:
@@ -100,6 +129,23 @@ def get_generation_pipeline() -> GundamPoserPipeline:
     return GundamPoserPipeline.load(
         **load_options,
     )
+
+
+def lora_source_status() -> str:
+    """Describe the configured adapter without exposing authentication details."""
+
+    configured_lora = os.getenv("GUNDAMPOSER_LORA_PATH")
+    if configured_lora:
+        path = Path(configured_lora)
+        status = "available" if path.is_file() else "not found"
+        return f"`{path}` (**{status}**)"
+    default_lora = Path("outputs/gundamposer_lora.safetensors")
+    if default_lora.is_file():
+        return f"`{default_lora}` (**available**)"
+    if IS_ZERO_GPU or os.getenv("GUNDAMPOSER_LORA_REPO_ID"):
+        repo_id = os.getenv("GUNDAMPOSER_LORA_REPO_ID") or DEFAULT_LORA_REPO_ID
+        return f"private Hub model `{repo_id}`"
+    return f"`{default_lora}` (**not found**)"
 
 
 def load_pose_example(selection: str | None) -> Image.Image | None:
@@ -200,6 +246,34 @@ def create_pose_guided_generation(
         image,
         previewer=previewer,
     )
+    baseline, trained, comparison_status = create_comparison_generations(
+        pose_image,
+        scene_preset,
+        scene_description,
+        seed,
+        generator=generator,
+        prompt_override=prompt_override,
+    )
+    return (
+        overlay,
+        pose_image,
+        baseline,
+        trained,
+        f"{pose_status}\n\n{comparison_status}",
+    )
+
+
+def create_comparison_generations(
+    pose_image: Image.Image | None,
+    scene_preset: str,
+    scene_description: str | None,
+    seed: int | float,
+    *,
+    generator: BaselineGenerator | None = None,
+    prompt_override: str | None = None,
+) -> tuple[Image.Image, Image.Image, str]:
+    """Generate a seed-matched baseline and trained result from only a pose map."""
+
     baseline, baseline_status = create_baseline_generation(
         pose_image,
         scene_preset,
@@ -218,35 +292,51 @@ def create_pose_guided_generation(
         prompt_override=prompt_override,
     )
     return (
-        overlay,
-        pose_image,
         baseline,
         trained,
-        f"{pose_status}\n\n**Baseline**\n\n{baseline_status}\n\n"
+        f"**Baseline**\n\n{baseline_status}\n\n"
         f"**Trained LoRA**\n\n{trained_status}",
     )
 
 
-def _handle_pose_guided_generation(
+def _handle_pose_extraction(
     image: Image.Image | None,
+) -> tuple[Image.Image, Image.Image, str]:
+    try:
+        return create_pose_preview(image)
+    except HfHubHTTPError as error:
+        raise gr.Error(
+            "Could not download the pose model. Check the network connection and try "
+            "again."
+        ) from error
+    except (PoseExtractionError, TypeError, ValueError) as error:
+        raise gr.Error(str(error)) from error
+    except RuntimeError as error:
+        raise gr.Error(f"Pose extraction failed: {error}") from error
+
+
+@spaces.GPU(size="large", duration=45)
+def _handle_comparison_generation(
+    pose_image: Image.Image | None,
     scene_preset: str,
     prompt_override: str | None,
     seed: int | float,
-) -> tuple[Image.Image, Image.Image, Image.Image, Image.Image, str]:
+    pose_status: str,
+) -> tuple[Image.Image, Image.Image, str]:
     try:
-        return create_pose_guided_generation(
-            image,
+        baseline, trained, comparison_status = create_comparison_generations(
+            pose_image,
             scene_preset,
             "",
             seed,
             prompt_override=prompt_override,
         )
+        return baseline, trained, f"{pose_status}\n\n{comparison_status}"
     except HfHubHTTPError as error:
         raise gr.Error(
-            "Could not download a public model. Check the network connection and "
-            "try again."
+            "Could not load a model. Verify the Space HF_TOKEN secret and try again."
         ) from error
-    except (GenerationError, PoseExtractionError, TypeError, ValueError) as error:
+    except (GenerationError, TypeError, ValueError) as error:
         raise gr.Error(str(error)) from error
     except RuntimeError as error:
         raise gr.Error(f"Generation failed: {error}") from error
@@ -254,7 +344,7 @@ def _handle_pose_guided_generation(
 
 def build_app() -> gr.Blocks:
     requested_device = os.getenv("GUNDAMPOSER_DEVICE") or None
-    generation_device = resolve_device(requested_device)
+    generation_device = "cuda" if IS_ZERO_GPU else resolve_device(requested_device)
     with gr.Blocks(
         title="GundamPoser Comparison",
         elem_classes=["app-shell"],
@@ -266,13 +356,7 @@ def build_app() -> gr.Blocks:
             "then compare the baseline with the trained result."
         )
         gr.Markdown(f"Generation backend: **{generation_device.upper()}**")
-        configured_lora = os.getenv("GUNDAMPOSER_LORA_PATH")
-        default_lora = Path("outputs/gundamposer_lora.safetensors")
-        displayed_lora = Path(configured_lora) if configured_lora else default_lora
-        adapter_status = "available" if displayed_lora.is_file() else "not found"
-        gr.Markdown(
-            f"Trained adapter: `{displayed_lora}` (**{adapter_status}**)"
-        )
+        gr.Markdown(f"Trained adapter: {lora_source_status()}")
         gr.Markdown("## Choose a pose")
         pose_example = gr.Dropdown(
             choices=list(POSE_EXAMPLES),
@@ -343,6 +427,7 @@ def build_app() -> gr.Blocks:
                 elem_classes=["responsive-image"],
             )
         generation_status = gr.Markdown()
+        pose_status = gr.State("")
         with gr.Accordion("Extracted pose details", open=False):
             with gr.Row(equal_height=True, elem_classes=["responsive-row"]):
                 overlay_image = gr.Image(
@@ -360,16 +445,16 @@ def build_app() -> gr.Blocks:
                     height=480,
                     elem_classes=["responsive-image"],
                 )
-        generate_button.click(
-            fn=_handle_pose_guided_generation,
-            inputs=[source_image, scene_preset, full_prompt, seed],
-            outputs=[
-                overlay_image,
-                pose_image,
-                baseline_image,
-                trained_image,
-                generation_status,
-            ],
+        pose_event = generate_button.click(
+            fn=_handle_pose_extraction,
+            inputs=source_image,
+            outputs=[overlay_image, pose_image, pose_status],
+            show_progress="full",
+        )
+        pose_event.success(
+            fn=_handle_comparison_generation,
+            inputs=[pose_image, scene_preset, full_prompt, seed, pose_status],
+            outputs=[baseline_image, trained_image, generation_status],
             concurrency_limit=1,
         )
         gr.Markdown(
@@ -382,11 +467,15 @@ def build_app() -> gr.Blocks:
         )
         with gr.Accordion("Built-in photo credits", open=False):
             gr.Markdown(
-                "The bundled examples are public-domain or CC0 images from "
-                "Wikimedia Commons. Full source and license details are included "
+                "The bundled examples use public-domain or Creative Commons images "
+                "from Wikimedia Commons. Full source and license details are included "
                 "with the assets."
             )
     return demo
+
+
+if IS_ZERO_GPU:
+    get_generation_pipeline()
 
 
 demo = build_app()

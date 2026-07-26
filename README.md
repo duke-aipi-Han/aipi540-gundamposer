@@ -2,10 +2,21 @@
 title: GundamPoser
 emoji: 🤖
 sdk: gradio
-python_version: 3.10
+sdk_version: 6.20.0
+python_version: 3.10.13
 app_file: app.py
 fullWidth: true
-short_description: Transform a human pose into a custom mecha-inspired character.
+short_description: Turn a human pose into a mecha-inspired character.
+models:
+  - stable-diffusion-v1-5/stable-diffusion-v1-5
+  - lllyasviel/control_v11p_sd15_openpose
+  - hw391/AIPI540-GundamPoser-LoRA
+tags:
+  - diffusion
+  - controlnet
+  - openpose
+  - lora
+  - image-generation
 ---
 
 # GundamPoser
@@ -121,6 +132,37 @@ different checkpoint or adapter with:
 GUNDAMPOSER_LORA_PATH=/absolute/path/to/adapter.safetensors \
   .venv/bin/python app.py
 ```
+
+## Hugging Face Space deployment
+
+The hosted app uses Gradio with ZeroGPU `large`. Pose extraction runs on CPU;
+only the seed-matched baseline and trained diffusion calls use the temporary GPU
+allocation. The diffusion pipeline is loaded once at startup as required by
+ZeroGPU.
+
+The selected adapter is stored in the private model repository
+`hw391/AIPI540-GundamPoser-LoRA`. The protected Space must have an `HF_TOKEN`
+secret with read access to that repository. The application uses the secret
+only when loading the private LoRA; public base and ControlNet downloads remain
+anonymous.
+
+Preview the exact model and Space upload allowlists without making changes:
+
+```bash
+.venv/bin/python scripts/deploy_hfspaces.py
+```
+
+After reviewing the list, upload the adapter followed by the curated Space
+runtime files:
+
+```bash
+.venv/bin/python scripts/deploy_hfspaces.py --apply
+```
+
+The deployment helper requires local Hugging Face authentication. It does not
+read or display token values in its file plan and never uploads `outputs/`
+except for the single explicitly selected adapter sent to the private model
+repository.
 
 ## Naming and rights
 

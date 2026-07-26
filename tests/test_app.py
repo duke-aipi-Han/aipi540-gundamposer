@@ -11,6 +11,7 @@ from app import (
     POSE_EXAMPLES,
     build_app,
     create_baseline_generation,
+    create_comparison_generations,
     create_pose_guided_generation,
     create_pose_preview,
     full_prompt_for_scene,
@@ -18,6 +19,8 @@ from app import (
     load_pose_example,
 )
 from gundamposer.pipeline import (
+    DEFAULT_LORA_REPO_ID,
+    DEFAULT_LORA_WEIGHT_NAME,
     GenerationMetadata,
     GenerationResult,
 )
@@ -228,6 +231,27 @@ def test_single_action_detects_pose_then_generates_from_pose_map() -> None:
     assert "Seed: `123`" in status
 
 
+def test_comparison_boundary_receives_only_pose_and_generation_controls() -> None:
+    pose = Image.new("RGB", (384, 512), "black")
+    generator = FakeGenerator()
+
+    baseline, trained, status = create_comparison_generations(
+        pose,
+        "Neutral studio",
+        "",
+        42,
+        generator=generator,
+        prompt_override="custom hwmecha warrior",
+    )
+
+    assert generator.pose_image is pose
+    assert generator.lora_strengths == [0.0, 0.8]
+    assert baseline.getpixel((0, 0)) == (0, 0, 255)
+    assert trained.getpixel((0, 0)) == (0, 128, 0)
+    assert "Baseline" in status
+    assert "Trained LoRA" in status
+
+
 def test_app_has_one_generation_action() -> None:
     config = build_app().get_config_file()
     buttons = [
@@ -357,4 +381,27 @@ def test_generation_pipeline_auto_loads_exported_adapter(
         get_generation_pipeline()
 
     load.assert_called_once_with(device=None, lora_path=adapter)
+    get_generation_pipeline.cache_clear()
+
+
+def test_zerogpu_pipeline_loads_private_hub_adapter(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("app.IS_ZERO_GPU", True)
+    monkeypatch.delenv("GUNDAMPOSER_LORA_PATH", raising=False)
+    monkeypatch.delenv("GUNDAMPOSER_LORA_REPO_ID", raising=False)
+    get_generation_pipeline.cache_clear()
+
+    with patch("app.GundamPoserPipeline.load", return_value=object()) as load:
+        get_generation_pipeline()
+
+    load.assert_called_once_with(
+        device="cuda",
+        lora_path=None,
+        lora_repo_id=DEFAULT_LORA_REPO_ID,
+        lora_weight_name=DEFAULT_LORA_WEIGHT_NAME,
+        lora_token=True,
+    )
     get_generation_pipeline.cache_clear()

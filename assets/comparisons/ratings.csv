@@ -1,0 +1,9 @@
+example,variant,pose_match,mecha_appearance,full_body_completeness,artifact_quality,notes
+running,baseline,4,4,5,4,Recognizable stride with clean complete figure
+running,trained,3,5,5,4,Stronger custom armor but stance becomes more upright
+action-balance,baseline,4,4,5,4,Good diagonal arm and one-leg balance
+action-balance,trained,3,5,5,3,Stronger armor but less faithful arms and heavier silhouette
+celebration,baseline,3,4,5,4,Raised arm is present but gesture is muted
+celebration,trained,3,5,4,3,Clearer custom armor with a large distracting shoulder form
+martial-arts,baseline,2,4,4,3,Action direction is present but vertical kick is lost
+martial-arts,trained,1,5,3,2,Strong armor styling but extreme pose and body completeness are lost
