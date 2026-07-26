@@ -22,7 +22,7 @@ tags:
 # GundamPoser
 
 GundamPoser is a hackathon project for:
-1. extracting the body pose from an one-person photo and 
+1. extracting the body pose from a one-person photo and
 2. generating one mecha-inspired person approximately the same pose.
 
 To preserve privacy, the app does not preserve a person's face or identity.
@@ -30,6 +30,71 @@ The source photo will be used only for pose estimation and will not be passed
 to the diffusion pipeline.
 
 - Python version: 3.10.x
+
+## Architecture
+
+GundamPoser separates model training from pose-guided inference. Training
+creates a small LoRA adapter while leaving the Stable Diffusion 1.5 base model
+frozen. During inference, the app combines that adapter with Stable Diffusion
+1.5 and OpenPose ControlNet.
+
+### Training workflow
+
+```text
+Gunpla images
+    -> validate the existing train/valid/test split
+    -> letterbox images to 512 x 512 and create captions
+    -> train LoRA layers on the Stable Diffusion 1.5 UNet
+    -> compare saved checkpoints on fixed evaluation prompts
+    -> export the selected LoRA adapter
+```
+
+Only the training split is used for optimization. The base model, VAE, and
+text encoder remain frozen, keeping the adapter much smaller than a complete
+diffusion model.
+
+### Inference workflow
+
+```text
+One-person photo
+    -> extract a body-only OpenPose skeleton on CPU
+    -> center and scale the skeleton into a 384 x 512 pose map
+    -> run Stable Diffusion 1.5 with OpenPose ControlNet
+    -> generate baseline and LoRA-adapted images for comparison
+```
+
+Both outputs use the same pose map, prompt, and seed. The baseline disables
+the LoRA adapter; the trained output enables it. The original photo is
+discarded after pose extraction and is never passed to the diffusion model.
+
+### Directory structure and key files
+
+```text
+.
+├── app.py                         # Gradio UI and generation handler
+├── configs/
+│   └── training.yaml             # Dataset, model, and LoRA settings
+├── src/gundamposer/
+│   ├── config.py                 # Runtime configuration and device selection
+│   ├── pipeline.py               # Baseline and LoRA diffusion inference
+│   ├── pose.py                   # OpenPose extraction and rendering
+│   ├── preprocessing.py          # Dataset validation and preparation
+│   └── prompts.py                # Prompt presets and composition
+├── scripts/
+│   ├── prepare_dataset.py        # Prepares the existing dataset splits
+│   ├── train_lora.py             # Trains and exports the LoRA adapter
+│   ├── create_comparisons.py     # Creates repeatable evaluation samples
+│   └── deploy_hfspaces.py        # Uploads the adapter and Space application
+├── assets/
+│   ├── pose-examples/            # Built-in poses and source attribution
+│   └── comparisons/              # Curated baseline/trained comparisons
+├── data/                          # Local source and processed datasets
+├── outputs/                       # Local checkpoints, adapters, and evaluations
+├── tests/                         # Unit and integration tests
+├── requirements.txt              # Local application dependencies
+├── requirements-train.txt        # Additional training dependencies
+└── requirements-space.txt        # Hugging Face Space dependencies
+```
 
 ## Setup
 
